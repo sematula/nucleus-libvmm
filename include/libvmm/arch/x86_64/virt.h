@@ -28,10 +28,10 @@
 #define LIBVMM_GUEST_PAT                VMCB_STATE_GUEST_PAT
 
 /*
- * Microkit caches INTERCEPT_INSTRUCTION1 (0x00C) in the SysVMEnter PPC slot, but
- * the kernel SVM SysVMEnter path only applies RIP (and mishandles arg2 as RFLAGS).
+ * Microkit caches INTERCEPT_INSTRUCTION1 (0x00C) in the SysVMEnter PPC slot;
+ * the kernel SVM SysVMEnter path applies RIP + EVENTINJ and ignores arg1 for now.
  * Writing LIBVMM_CONTROL_PPC therefore only updates the local Microkit cache;
- * default kernel intercepts (CPUID/HLT/IO/MSR/SHUTDOWN/VMRUN) remain in force.
+ * default kernel intercepts (CPUID/HLT/IO/SHUTDOWN/VMRUN) remain in force.
  */
 #define LIBVMM_CONTROL_PPC              VMCB_CONTROL_INTERCEPT_INSTRUCTION1
 
