@@ -10,7 +10,7 @@
 #include <libvmm/arch/x86_64/guest_time.h>
 #include <libvmm/arch/x86_64/fault.h>
 #include <libvmm/arch/x86_64/vcpu.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/guest.h>
 #include <sel4/arch/vmenter.h>
 #include <sddf/util/util.h>
@@ -287,7 +287,7 @@ static void lapic_write_tpr(uint8_t tpr)
     } else {
         /* Eligible by priority but IF is clear or we're in a blocking
          * shadow. Arm the interrupt window so we get another shot. */
-        vcpu_exit_update_ppvc(VMCS_PPVC_WAIT_IRQ_WINDOW);
+        vcpu_exit_update_ppvc(LIBVMM_PPVC_WAIT_IRQ_WINDOW);
     }
 }
 
@@ -298,14 +298,14 @@ void lapic_maintenance(void)
     int vector = get_next_eligible_irq_vector();
     if (vector == -1) {
         /* no pending IRQ to inject */
-        vcpu_exit_update_ppvc(VMCS_PPVC_DEFAULT);
+        vcpu_exit_update_ppvc(LIBVMM_PPVC_DEFAULT);
         return;
     }
 
     if (is_irq_in_service(vector)) {
         /* selected interrupt already in service, remains queued until guest issues EOI
          * so we don't loose it. */
-        vcpu_exit_update_ppvc(VMCS_PPVC_DEFAULT);
+        vcpu_exit_update_ppvc(LIBVMM_PPVC_DEFAULT);
         return;
     }
 
@@ -323,7 +323,7 @@ void lapic_maintenance(void)
     uint32_t vm_entry_interruption = (uint32_t)vector;
     vm_entry_interruption |= BIT(31); // valid bit
 
-    vcpu_exit_update_ppvc(VMCS_PPVC_DEFAULT);
+    vcpu_exit_update_ppvc(LIBVMM_PPVC_DEFAULT);
     vcpu_exit_inject_irq(vm_entry_interruption);
 }
 
@@ -824,7 +824,7 @@ static bool inject_lapic_irq(size_t vcpu_id, uint8_t vector)
     if (vcpu_can_take_irq(0)) {
         lapic_maintenance();
     } else {
-        vcpu_exit_update_ppvc(VMCS_PPVC_WAIT_IRQ_WINDOW);
+        vcpu_exit_update_ppvc(LIBVMM_PPVC_WAIT_IRQ_WINDOW);
     }
 #else
     /* See "26.4.2 Guest Non-Register State" for "Guest interrupt status" layout */

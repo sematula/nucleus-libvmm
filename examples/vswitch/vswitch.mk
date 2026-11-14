@@ -30,7 +30,8 @@ TOOLCHAIN ?= clang
 SUPPORTED_BOARDS := \
 	qemu_virt_aarch64 \
 	maaxboard \
-	x86_64_generic_vtx
+	x86_64_generic_vtx \
+	x86_64_generic_svm
 
 SYSTEM_FILE := vswitch.system
 IMAGE_FILE := loader.img
@@ -220,7 +221,7 @@ client_vmm.elf: client_vm/vmm.o client_vm/guest_arch_init.o client_vm/images.o l
 	client_vm/rootfs.cpio.gz client_vm/images.o client_vm/vmm.o
 
 qemu: $(IMAGE_FILE)
-	[ "${MICROKIT_BOARD}" = "qemu_virt_aarch64" ] || [ "${MICROKIT_BOARD}" = "x86_64_generic_vtx" ]
+	[ "${MICROKIT_BOARD}" = "qemu_virt_aarch64" ] || [ "${MICROKIT_BOARD}" = "x86_64_generic_vtx" ] || [ "${MICROKIT_BOARD}" = "x86_64_generic_svm" ]
 	$(QEMU) $(QEMU_ARCH_ARGS) \
 			-serial mon:stdio \
 			-m size=2G \

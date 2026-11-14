@@ -10,7 +10,7 @@
 #include <libvmm/util/util.h>
 #include <libvmm/arch/x86_64/cpuid.h>
 #include <libvmm/arch/x86_64/fault.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/vcpu.h>
 
 /* Documents referenced:
@@ -88,6 +88,15 @@ bool initialise_cpuid(void)
         print_missing_baseline_bits(CPUID_80000001H_X64_V2_BASELINE_EDX, d);
         return false;
     }
+
+#if defined(CONFIG_SVM)
+    /* Host must expose SVM for the SVM board path. Never advertise SVM to the guest. */
+    if (!(c & CPUID_80000001_ECX_SVM)) {
+        LOG_VMM_ERR("Host CPUID leaf 0x80000001 ECX missing SVM bit\n");
+        return false;
+    }
+#endif
+
     return true;
 }
 
@@ -116,7 +125,7 @@ bool emulate_cpuid(seL4_VCPUContext *vctx)
         /* "A value of 1 indicates that the OS has set CR4.OSXSAVE[bit 18]
          * to enable XSETBV/XGETBV instructions to access XCR0 and to support
          * processor extended state management using XSAVE/XRSTOR." */
-        uint64_t cr4 = microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_CR4);
+        uint64_t cr4 = libvmm_vcpu_read(0, LIBVMM_GUEST_CR4);
         if (cr4 & CR4_OSXSAVE) {
             vctx->ecx |= CPUID_1H_ECX_OSXSAVE;
         }
@@ -206,7 +215,8 @@ bool emulate_cpuid(seL4_VCPUContext *vctx)
     case 0x80000001: /* "Extended Processor Signature and Feature Bits" */
         vctx->eax = 0;
         vctx->ebx = 0;
-        vctx->ecx = CPUID_80000001H_X64_V2_BASELINE_ECX;
+        /* Baseline ECX does not set SVM (bit 2); keep it clear so L2 never sees SVM. */
+        vctx->ecx = CPUID_80000001H_X64_V2_BASELINE_ECX & ~CPUID_80000001_ECX_SVM;
         vctx->edx = CPUID_80000001H_X64_V2_BASELINE_EDX;
         if (guest_in_64_bits()) {
             /* [1] "This feature flag is always enumerated as 0 outside 64-bit mode." */

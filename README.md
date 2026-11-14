@@ -69,12 +69,15 @@ This library supports creating Linux VMs on these Microkit platforms:
 | `maaxboard`            | aarch64      |
 | `rpi4b_*gb`            | aarch64      |
 | `zcu102`               | aarch64      |
-| `x86_64_generic_vtx`   | x86-64       |
+| `x86_64_generic_vtx`   | x86-64 (Intel VT-x / EPT only) |
+| `x86_64_generic_svm`   | x86-64 (AMD SVM / NPT only)    |
 
 There are no additional hardware requirements for aarch64.
 
-For x86-64 you can build the library and examples on any macOS or Linux machine, but
-running them requires an Intel CPU with VT-x enabled in the BIOS.
+For x86-64 you can build the library and examples on any macOS or Linux machine.
+Running them requires the matching virt ISA: `x86_64_generic_vtx` needs Intel VT-x
+(do not treat it as valid for AMD Hyper-V nesting); `x86_64_generic_svm` needs AMD SVM/NPT.
+One virt ISA per image.
 
 Not all examples support all platforms. Check the individual example for details.
 

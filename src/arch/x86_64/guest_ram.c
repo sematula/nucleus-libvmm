@@ -10,7 +10,7 @@
 #include <libvmm/guest.h>
 #include <libvmm/guest_ram.h>
 #include <libvmm/util/util.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/vcpu.h>
 
 #define X86_PAGING_OBJECT_SIZE 0x1000

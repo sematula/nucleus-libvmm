@@ -1,5 +1,6 @@
 /*
  * Copyright 2025, UNSW
+ * Copyright 2026, Valence contributors
  *
  * SPDX-License-Identifier: BSD-2-Clause
  */
@@ -9,7 +10,7 @@
 #include <libvmm/util/util.h>
 #include <libvmm/arch/x86_64/fault.h>
 #include <libvmm/arch/x86_64/ioports.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/acpi.h>
 #include <libvmm/arch/x86_64/vcpu.h>
 #include <libvmm/arch/x86_64/cpuid.h>
@@ -17,7 +18,6 @@
 #include <libvmm/arch/x86_64/apic.h>
 #include <libvmm/arch/x86_64/hpet.h>
 #include <libvmm/arch/x86_64/fpu.h>
-#include <libvmm/arch/x86_64/vcpu.h>
 #include <libvmm/arch/x86_64/instruction.h>
 #include <libvmm/arch/x86_64/memory_space.h>
 #include <libvmm/arch/x86_64/guest_time.h>
@@ -37,26 +37,23 @@
  * [1] seL4: include/arch/x86/arch/object/vcpu.h
  * [2] Title: Intel® 64 and IA-32 Architectures Software Developer’s Manual Combined Volumes: 1, 2A, 2B, 2C, 2D, 3A, 3B, 3C, 3D, and 4 Order Number: 325462-080US June 2023
  * [3] https://wiki.osdev.org/Interrupt_Vector_Table
+ * [4] AMD64 Architecture Programmer’s Manual Volume 2 (SVM / VMCB exits)
  */
 
-/* [2] "Table 6-1. Exceptions and Interrupts" */
 #define GP_VECTOR 13
+
+#if defined(CONFIG_VTX)
 
 /* [2] Table 29-7. "Exit Qualification for EPT Violations" */
 #define EPT_VIOLATION_READ_BIT BIT(0)
 #define EPT_VIOLATION_WRITE_BIT BIT(1)
 
-/* Exit reasons.
- * From [1]
- */
 enum exit_reasons {
     EXCEPTION_OR_NMI = 0x00,
     EXTERNAL_INTERRUPT = 0x01,
     TRIPLE_FAULT = 0x02,
     INIT_SIGNAL = 0x03,
     SIPI = 0x04,
-    /*IO_SMI = 0x05,
-     *   OTHER_SMI = 0x06,*/
     INTERRUPT_WINDOW = 0x07,
     NMI_WINDOW = 0x08,
     TASK_SWITCH = 0x09,
@@ -85,14 +82,11 @@ enum exit_reasons {
     WRMSR = 0x20,
     INVALID_GUEST_STATE = 0x21,
     MSR_LOAD_FAIL = 0x22,
-    /* 0x23 */
     MWAIT = 0x24,
     MONITOR_TRAP_FLAG = 0x25,
-    /* 0x26 */
     MONITOR = 0x27,
     PAUSE = 0x28,
     MACHINE_CHECK = 0x29,
-    /* 0x2A */
     TPR_BELOW_THRESHOLD = 0x2B,
     APIC_ACCESS = 0x2C,
     VIRTUALIZED_EOI = 0x2D,
@@ -110,7 +104,6 @@ enum exit_reasons {
     NUM_EXIT_REASONS = 0x39,
 };
 
-/* [2] "Table C-1. Basic Exit Reasons" */
 static char *exit_reason_strs[] = { "Exception or non-maskable interrupt (NMI)",
                                     "External interrupt",
                                     "Triple Fault",
@@ -209,6 +202,92 @@ bool ept_fault_is_write(seL4_Word qualification)
 {
     return !!(qualification & EPT_VIOLATION_WRITE_BIT);
 }
+
+#elif defined(CONFIG_SVM)
+
+/* seL4 SVM delivers instruction_len MR as 0; use fixed lengths for common exits. */
+#define SVM_INSN_LEN_CPUID 2
+#define SVM_INSN_LEN_HLT   1
+#define SVM_INSN_LEN_MSR   2
+#define SVM_INSN_LEN_XSETBV 3
+
+char *fault_to_string(int exit_reason)
+{
+    switch ((uint64_t)exit_reason) {
+    case VMCB_EXIT_CPUID:
+        return "CPUID";
+    case VMCB_EXIT_HLT:
+        return "HLT";
+    case VMCB_EXIT_IO:
+        return "I/O instruction";
+    case VMCB_EXIT_MSR:
+        return "MSR";
+    case VMCB_EXIT_SHUTDOWN:
+        return "SHUTDOWN";
+    case VMCB_EXIT_VMRUN:
+        return "VMRUN";
+    case VMCB_EXIT_XSETBV:
+        return "XSETBV";
+    case VMCB_EXIT_NPF:
+        return "Nested page fault";
+    default:
+        return "Unknown SVM exit";
+    }
+}
+
+static bool fault_is_trap_like(int exit_reason)
+{
+    switch ((uint64_t)exit_reason) {
+    case VMCB_EXIT_HLT:
+        /* Prefer rip+0 so empty/halt rung can observe halt without spinning. */
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool ept_fault_is_write(seL4_Word qualification)
+{
+    return !!(qualification & VMCB_NPF_INFO1_W);
+}
+
+bool ept_fault_is_read(seL4_Word qualification)
+{
+    /* Mirror VT-x helpers: data read ≈ not write (ignore ID/fetch bit for callers). */
+    return !ept_fault_is_write(qualification);
+}
+
+/* Translate SVM IO EXITINFO1 into the VT-x IO qualification layout used by ioports.c. */
+static uint64_t svm_io_qual_to_vtx(uint64_t info1)
+{
+    uint64_t size = (info1 >> 4) & 0x7;
+    uint64_t vtx_size = (size == 1) ? 0 : (size == 2) ? 1 : 3;
+    uint64_t q = vtx_size;
+    if (info1 & BIT(0)) {
+        q |= BIT(3); /* IN */
+    }
+    if (info1 & BIT(2)) {
+        q |= BIT(4); /* STR */
+    }
+    if (info1 & BIT(3)) {
+        q |= BIT(5); /* REP */
+    }
+    q |= info1 & 0xffff0000ull; /* PORT */
+    return q;
+}
+
+static void svm_inject_gp(void)
+{
+    /* EVENTINJ: vector | type=exception | EC valid | valid; error code in high 32 bits. */
+    uint64_t eventinj = GP_VECTOR;
+    eventinj |= ((uint64_t)VMCB_EVENTINJ_TYPE_EXCEPTION) << 8;
+    eventinj |= VMCB_EVENTINJ_EC_VALID;
+    eventinj |= VMCB_EVENTINJ_VALID;
+    /* error code 0 in bits 63:32 */
+    vcpu_exit_inject_irq(eventinj);
+}
+
+#endif /* CONFIG_VTX / CONFIG_SVM */
 
 struct ept_exception_handler {
     uintptr_t base;
@@ -376,6 +455,109 @@ static bool handle_pio_fault(seL4_VCPUContext *vctx, seL4_Word qualification)
     return true;
 }
 
+#if defined(CONFIG_SVM)
+
+bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
+{
+    bool success = false;
+    decoded_instruction_ret_t decoded_ins = { 0 };
+    unsigned rip_additive = 0;
+    bool msr_or_xsetbv_fail = false;
+
+    vcpu_cache_exit_state(msginfo);
+
+    seL4_Word f_reason = vcpu_exit_get_reason();
+    seL4_Word qualification = vcpu_exit_get_qualification();
+    seL4_Word rip = vcpu_exit_get_rip();
+    seL4_VCPUContext *vctx = vcpu_exit_get_context();
+
+    switch (f_reason) {
+    case VMCB_EXIT_CPUID:
+        success = emulate_cpuid(vctx);
+        rip_additive = SVM_INSN_LEN_CPUID;
+        break;
+    case VMCB_EXIT_MSR:
+        /* EXITINFO1 bit0: 1 = WRMSR, 0 = RDMSR. */
+        if (qualification & BIT(0)) {
+            success = emulate_wrmsr(vctx);
+        } else {
+            success = emulate_rdmsr(vctx);
+        }
+        rip_additive = SVM_INSN_LEN_MSR;
+        msr_or_xsetbv_fail = !success;
+        break;
+    case VMCB_EXIT_NPF:
+        decoded_ins = decode_instruction(vcpu_id, rip);
+        if (decoded_ins.type == INSTRUCTION_DECODE_FAIL) {
+            success = false;
+        } else {
+            success = handle_ept_fault(vctx, qualification, decoded_ins);
+            rip_additive = decoded_ins.len;
+        }
+        break;
+    case VMCB_EXIT_IO: {
+        uint64_t vtx_qual = svm_io_qual_to_vtx(qualification);
+        success = handle_pio_fault(vctx, vtx_qual);
+        /* seL4 maps EXITINFO2 into the GPA MR; for IO that is next RIP. */
+        if (vcpu_exit_get_gpa() > rip) {
+            rip_additive = (unsigned)(vcpu_exit_get_gpa() - rip);
+        } else {
+            rip_additive = 1;
+        }
+        break;
+    }
+    case VMCB_EXIT_XSETBV:
+        success = emulate_xsetbv(vctx);
+        rip_additive = SVM_INSN_LEN_XSETBV;
+        msr_or_xsetbv_fail = !success;
+        break;
+    case VMCB_EXIT_HLT:
+        /* Trap-like: leave RIP on HLT so empty/halt can observe halt. */
+        success = true;
+        rip_additive = 0;
+        break;
+    case VMCB_EXIT_VMRUN:
+        LOG_VMM_ERR("guest attempted VMRUN (Nested SVM is out of scope)\n");
+        success = false;
+        break;
+    case VMCB_EXIT_SHUTDOWN:
+        LOG_VMM_ERR("guest SHUTDOWN intercept\n");
+        success = false;
+        break;
+    default:
+        LOG_VMM_ERR("unhandled SVM fault: 0x%lx\n", f_reason);
+    };
+
+    /*
+     * Deviation from VT-x: no VMX-preemption timer. guest_time_maintenance still
+     * services due timeouts via TSC comparison when the guest already exits.
+     */
+    guest_time_maintenance();
+
+    if (success) {
+        if (fault_is_trap_like(f_reason)) {
+            rip_additive = 0;
+        }
+        vcpu_exit_prepare_resume(rip_additive);
+    } else if (msr_or_xsetbv_fail) {
+#ifdef LOG_GP
+        LOG_VMM("injecting GP due to failure in handling %s\n", fault_to_string(f_reason));
+#endif
+        svm_inject_gp();
+        vcpu_exit_prepare_resume(0);
+        success = true;
+    } else {
+        LOG_VMM_ERR("failed handling fault: '%s' (0x%lx)\n", fault_to_string(f_reason), f_reason);
+        vcpu_print_regs(vcpu_id);
+        vcpu_print_instruction(vcpu_id);
+        LOG_VMM_ERR("VCPU will not be resumed.\n");
+    }
+
+    return success;
+}
+
+#elif defined(CONFIG_VTX)
+
 bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
 {
     bool success = false;
@@ -422,29 +604,18 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
 #if APIC_VIRT_LEVEL == APIC_VIRT_LEVEL_APICV
     case VIRTUALIZED_EOI: {
         uint8_t eoi_vector = qualification;
-        /* If we get here then the guest has ack'ed a passed through I/O APIC irq,
-         * find and run the ack function, the clear the vector from the bitmap
-         */
-        // @billn the whole clearing vector from bitmap thing could be done more efficiently, e.g.
-        // only do it when the guest reprogram the vector
-
         success = ioapic_ack_passthrough_irq(eoi_vector);
         break;
     }
     case APIC_WRITE: {
-        /* [2] "31.4.3.3 APIC-Write VM Exits"
-         * "The exit qualification is the page offset of the write access that led to the VM exit."
-         */
         uint64_t lapic_reg_offset = qualification;
         success = lapic_write_fault_handle(lapic_reg_offset, lapic_read_reg(lapic_reg_offset));
         break;
     }
     case APIC_ACCESS: {
-        /* [2] "Table 29-6. Exit Qualification for APIC-Access VM Exits from Linear Accesses and Guest-Physical Accesses" */
         uint16_t offset = qualification & 0x7ff;
         uint8_t access_type = (qualification >> 12) & 0xf;
 
-        // only handle reads and writes due to instruction execution
         if (access_type == 0) {
             uint32_t data;
             success = lapic_read_fault_handle(offset, &data);
@@ -471,7 +642,6 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
                 break;
             }
             uint64_t *vctx_raw = (uint64_t *)vctx;
-            // TODO: probably use wrapper for getting write value.
             success = lapic_write_fault_handle(offset, vctx_raw[decoded_ins.decoded.memory_instruction.target_reg]);
         } else {
             LOG_VMM_ERR("unsupported access type %d for apic access vm exit\n", access_type);
@@ -510,9 +680,6 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
         unsigned rip_additive = 0;
         if (!fault_is_trap_like(f_reason)) {
             if (f_reason == EPT_VIOLATION) {
-                /* Note that for EPT faults the instruction length won't be valid.
-                * See "30.2.5 Information for VM Exits Due to Instruction Execution"
-                */
                 rip_additive = decoded_ins.len;
             } else {
                 rip_additive = vcpu_exit_get_instruction_len();
@@ -524,20 +691,15 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
         LOG_VMM("injecting GP due to failure in handling %s\n", fault_to_string(f_reason));
 #endif
 
-        /* [2] "RDMSR—Read From Model Specific Register":
-         * "Specifying a reserved or unimplemented MSR address in ECX will also cause a general protection exception." */
         microkit_vcpu_x86_write_vmcs(GUEST_BOOT_VCPU_ID, VMX_CONTROL_ENTRY_EXCEPTION_ERROR_CODE, 0);
 
-        /* [2] "Table 26-17. Format of the VM-Entry Interruption-Information Field" and [3] */
-        uint64_t interruption = GP_VECTOR; // General protection fault vector
-        interruption |= 3ull << 8; // Hardware exception
-        interruption |= BIT(11); // deliver error code
-        interruption |= BIT(31); // valid
+        uint64_t interruption = GP_VECTOR;
+        interruption |= 3ull << 8;
+        interruption |= BIT(11);
+        interruption |= BIT(31);
 
         vcpu_exit_inject_irq(interruption);
-        /* Don't advance rip */
         vcpu_exit_prepare_resume(0);
-        /* We still want to resume the VCPU though! */
         success = true;
     } else if (!success) {
         LOG_VMM_ERR("failed handling fault: '%s' (0x%lx)\n", fault_to_string(f_reason), f_reason);
@@ -548,3 +710,5 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
 
     return success;
 }
+
+#endif /* CONFIG_SVM / CONFIG_VTX */

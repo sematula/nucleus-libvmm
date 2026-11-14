@@ -22,7 +22,8 @@ SUPPORTED_BOARDS := qemu_virt_aarch64 \
 					maaxboard \
 					rpi4b_1gb \
 					zcu102 \
-					x86_64_generic_vtx
+					x86_64_generic_vtx \
+					x86_64_generic_svm
 
 vpath %.c $(LIBVMM) $(EXAMPLE_DIR)
 

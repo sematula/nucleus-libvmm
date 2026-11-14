@@ -8,7 +8,7 @@
 #include <sddf/util/util.h>
 #include <libvmm/util/util.h>
 #include <libvmm/arch/x86_64/apic.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/vcpu.h>
 
 /* Documents referenced:
@@ -49,7 +49,7 @@ static seL4_Word get_write_operand(seL4_VCPUContext *vctx, seL4_Word qualificati
     case 3:
         return vctx->ebx;
     case 4:
-        return microkit_vcpu_x86_read_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_RSP);
+        return libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_RSP);
     case 5:
         return vctx->ebp;
     case 6:
@@ -96,7 +96,7 @@ static void write_to_read_operand(seL4_VCPUContext *vctx, seL4_Word qualificatio
         vctx->ebx = data;
         break;
     case 4:
-        microkit_vcpu_x86_write_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_RSP, data);
+        libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_RSP, data);
         break;
     case 5:
         vctx->ebp = data;
@@ -158,30 +158,31 @@ bool handle_cr_access(seL4_VCPUContext *vctx, seL4_Word qualification)
     }
 #endif
     case 0: {
+#if defined(CONFIG_VTX)
         if (get_access_type(qualification) == MOV_TO_CR) {
             /* See "vcpu_set_up_control_registers()" in vcpu.c for an explainer on why we do this. */
             uint64_t guest_requested_cr0 = get_write_operand(vctx, qualification);
 
-            microkit_vcpu_x86_write_vmcs(0, VMX_GUEST_CR0, guest_requested_cr0 | CR0_NE);
+            libvmm_vcpu_write(0, LIBVMM_GUEST_CR0, guest_requested_cr0 | CR0_NE);
             microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_CR0_READ_SHADOW, guest_requested_cr0);
 
             /* On real hardware, setting THEN clearing CR0.PG have side effects. We must emulate
              * this on software or we will get invalid state on VM resume.
              * See section "Switching Out of IA-32e Mode Operation" of [1]:
              * "Deactivate IA-32e mode by clearing CR0.PG = 0. This causes the processor to set IA32_EFER.LMA = 0." */
-            seL4_Word efer = microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_EFER);
+            seL4_Word efer = libvmm_vcpu_read(0, LIBVMM_GUEST_EFER);
             seL4_Word entry_ctrl = microkit_vcpu_x86_read_vmcs(0, VMX_CONTROL_ENTRY_CONTROLS);
 
             if (!(guest_requested_cr0 & CR0_PG)) {
                 /* If we are in long mode then we must drop out of long mode. */
                 if (efer & IA32_EFER_LMA) {
-                    microkit_vcpu_x86_write_vmcs(0, VMX_GUEST_EFER, efer & ~IA32_EFER_LMA);
+                    libvmm_vcpu_write(0, LIBVMM_GUEST_EFER, efer & ~IA32_EFER_LMA);
                     microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_ENTRY_CONTROLS, entry_ctrl & ~VMCS_VENC_ENABLE_IA32E);
                 }
             } else {
                 /* If paging is enabled, check if we should enter long mode. */
                 if (efer & IA32_EFER_LME) {
-                    microkit_vcpu_x86_write_vmcs(0, VMX_GUEST_EFER, efer | IA32_EFER_LMA);
+                    libvmm_vcpu_write(0, LIBVMM_GUEST_EFER, efer | IA32_EFER_LMA);
                     microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_ENTRY_CONTROLS, entry_ctrl | VMCS_VENC_ENABLE_IA32E);
                 }
             }
@@ -193,6 +194,12 @@ bool handle_cr_access(seL4_VCPUContext *vctx, seL4_Word qualification)
         } else {
             return false;
         }
+#else
+        /* SVM: CR0 intercepts are not enabled for empty/halt; LMA tracks PG|LME in hardware. */
+        (void)vctx;
+        (void)qualification;
+        return false;
+#endif
     }
     default:
         LOG_VMM_ERR("unhandled CR%d access, access type %d\n", get_cr_number(qualification),

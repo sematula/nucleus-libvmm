@@ -30,7 +30,8 @@ Where `<MICROKIT_BOARD>` is one of:
 * `odroidc4`
 * `maaxboard`
 * `rpi4b_1gb` (you can run the produced image on the higher RAM variants)
-* `x86_64_generic_vtx`
+* `x86_64_generic_vtx` (Intel VT-x)
+* `x86_64_generic_svm` (AMD SVM)
 * `zcu102`
 
 Other configuration options can be passed to the Makefile such as `MICROKIT_CONFIG`

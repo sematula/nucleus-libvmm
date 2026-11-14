@@ -1,5 +1,6 @@
 /*
  * Copyright 2025, UNSW
+ * Copyright 2026, Valence contributors
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
@@ -13,7 +14,7 @@
 #include <libvmm/util/util.h>
 #include <libvmm/arch/x86_64/apic.h>
 #include <libvmm/arch/x86_64/vcpu.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/fault.h>
 #include <sel4/arch/vmenter.h>
 
@@ -40,7 +41,10 @@ static struct vcpu_fault_state vcpu_fault_state;
 /* Document referenced:
  * [1] Title: Intel® 64 and IA-32 Architectures Software Developer’s Manual Combined Volumes: 1, 2A, 2B, 2C, 2D, 3A, 3B, 3C, 3D, and 4
  *     Order Number: 325462-080US June 2023
+ * [2] AMD64 Architecture Programmer’s Manual Volume 2: System Programming (VMCB / SVM)
  */
+
+#if defined(CONFIG_VTX)
 
 static bool vcpu_set_up_vm_exec_controls(uint64_t primary, uint64_t secondary)
 {
@@ -300,6 +304,82 @@ bool vcpu_set_up_reset_state(void)
     return true;
 }
 
+#elif defined(CONFIG_SVM)
+
+/*
+ * SVM path: write guest state into the VMCB. Skip VT-x VM-execution/entry/exit
+ * controls; the kernel installs default intercepts (CPUID/HLT/IO/MSR/SHUTDOWN/VMRUN).
+ * Also enable XSETBV intercept via WriteVMCB (not in the Microkit SysVMEnter cache).
+ */
+
+static void vcpu_svm_enable_xsetbv_intercept(void)
+{
+    uint64_t i2 = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, VMCB_CONTROL_INTERCEPT_INSTRUCTION2);
+    i2 |= VMCB_INTERCEPT_XSETBV;
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, VMCB_CONTROL_INTERCEPT_INSTRUCTION2, i2);
+}
+
+bool vcpu_set_up_long_mode(uint64_t cr3, uint64_t gdt_gpa, uint64_t gdt_limit)
+{
+    vcpu_svm_enable_xsetbv_intercept();
+
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR0, CR0_LONG_MODE);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR3, cr3);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR4, CR4_DEFAULT);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_EFER, IA32_EFER_LM_DEFAULT);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_RFLAGS, RFLAGS_DEFAULT);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_PAT, PAT_RESET_VALUE);
+
+    /* CPL is at an unaligned offset; kernel zeros the VMCB so CPL stays 0. */
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_GDTR, 0, 0, (uint32_t)gdt_limit, gdt_gpa);
+
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_CS, 8, VMCB_CS_ATTRIB_LONG_MODE, 0xfffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_DS, 16, VMCB_DS_ATTRIB_LONG_MODE, 0xfffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_ES, 16, VMCB_DS_ATTRIB_LONG_MODE, 0xfffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_SS, 16, VMCB_DS_ATTRIB_LONG_MODE, 0xfffff, 0);
+    /* Not present: clear P in attrib. */
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_FS, 0, 0, 0xfffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_GS, 0, 0, 0xfffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_LDTR, 0, 0, 0, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_TR, 0, VMCB_SEG_ATTRIB_TYPE_TSS_BUSY | VMCB_SEG_ATTRIB_P, 0, 0);
+
+    return true;
+}
+
+bool vcpu_set_up_reset_state(void)
+{
+    /* Mirror VT-x real-mode-like reset using VMCB segment format ([2]). */
+    vcpu_svm_enable_xsetbv_intercept();
+
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR0, CR0_RESET);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR3, 0);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR4, 0);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_RFLAGS, 0x2);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_EFER, 0);
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_PAT, PAT_RESET_VALUE);
+
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_CS, 0xf000, VMCB_CS_ATTRIB_RESET, 0xffff, 0xffff0000);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_SS, 0, VMCB_DS_ATTRIB_RESET, 0xffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_DS, 0, VMCB_DS_ATTRIB_RESET, 0xffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_ES, 0, VMCB_DS_ATTRIB_RESET, 0xffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_FS, 0, VMCB_DS_ATTRIB_RESET, 0xffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_GS, 0, VMCB_DS_ATTRIB_RESET, 0xffff, 0);
+
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_GDTR, 0, 0, 0xffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_IDTR, 0, 0, 0xffff, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_LDTR, 0, VMCB_SEG_ATTRIB_TYPE_LDT | VMCB_SEG_ATTRIB_P, 0, 0);
+    vmcb_write_segment(GUEST_BOOT_VCPU_ID, VMCB_STATE_TR, 0, VMCB_SEG_ATTRIB_TYPE_TSS_BUSY | VMCB_SEG_ATTRIB_P, 0, 0);
+
+    seL4_VCPUContext vctx;
+    memset(&vctx, 0, sizeof(seL4_VCPUContext));
+    vctx.edx = 0x00050600; /* Matches cpuid.h */
+    microkit_vcpu_x86_write_regs(GUEST_BOOT_VCPU_ID, &vctx);
+
+    return true;
+}
+
+#endif /* CONFIG_VTX / CONFIG_SVM */
+
 void vcpu_cache_exit_state(microkit_msginfo msginfo)
 {
     /* Prevent state overwriting, if this goes off then you probably called this or didn't call
@@ -308,9 +388,9 @@ void vcpu_cache_exit_state(microkit_msginfo msginfo)
 
     assert(microkit_msginfo_get_count(msginfo) == SEL4_VMENTER_NUM_FAULT_MSGS);
 
-    vcpu_fault_state.rip = microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_RIP);
-    vcpu_fault_state.ppvc = microkit_vcpu_x86_read_vmcs(0, VMX_CONTROL_PRIMARY_PROCESSOR_CONTROLS);
-    vcpu_fault_state.irq = microkit_vcpu_x86_read_vmcs(0, VMX_CONTROL_ENTRY_INTERRUPTION_INFO);
+    vcpu_fault_state.rip = libvmm_vcpu_read(0, LIBVMM_GUEST_RIP);
+    vcpu_fault_state.ppvc = libvmm_vcpu_read(0, LIBVMM_CONTROL_PPC);
+    vcpu_fault_state.irq = libvmm_vcpu_read(0, LIBVMM_CONTROL_IRQ);
 
     vcpu_fault_state.reason = microkit_mr_get(SEL4_VMENTER_FAULT_REASON_MR);
     vcpu_fault_state.qualification = microkit_mr_get(SEL4_VMENTER_FAULT_QUALIFICATION_MR);
@@ -350,7 +430,7 @@ void vcpu_exit_update_ppvc(uint64_t ppvc)
     if (vcpu_fault_state.valid) {
         vcpu_fault_state.ppvc = ppvc;
     } else {
-        microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_PRIMARY_PROCESSOR_CONTROLS, ppvc);
+        libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, ppvc);
     }
 }
 
@@ -359,7 +439,7 @@ uint64_t vcpu_exit_get_irq(void)
     if (vcpu_fault_state.valid) {
         return vcpu_fault_state.irq;
     } else {
-        return microkit_vcpu_x86_read_vmcs(0, VMX_CONTROL_ENTRY_INTERRUPTION_INFO);
+        return libvmm_vcpu_read(0, LIBVMM_CONTROL_IRQ);
     }
 }
 
@@ -368,7 +448,7 @@ void vcpu_exit_inject_irq(uint64_t irq)
     if (vcpu_fault_state.valid) {
         vcpu_fault_state.irq = irq;
     } else {
-        microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_ENTRY_INTERRUPTION_INFO, irq);
+        libvmm_vcpu_write(0, LIBVMM_CONTROL_IRQ, irq);
     }
 }
 
@@ -395,7 +475,7 @@ uint64_t vcpu_exit_get_rflags(void)
     if (vcpu_fault_state.valid) {
         return vcpu_fault_state.rflags;
     } else {
-        return microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_RFLAGS);
+        return libvmm_vcpu_read(0, LIBVMM_GUEST_RFLAGS);
     }
 }
 
@@ -403,9 +483,13 @@ uint64_t vcpu_exit_get_interruptability(void)
 {
     if (vcpu_fault_state.valid) {
         return vcpu_fault_state.interruptability;
-    } else {
-        return microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_INTERRUPTABILITY);
     }
+#if defined(CONFIG_SVM)
+    /* seL4 SVM always reports GUEST_INT MR as 0; interrupt shadow at VMCB 0x68 unused. */
+    return 0;
+#else
+    return microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_INTERRUPTABILITY);
+#endif
 }
 
 uint64_t vcpu_exit_get_cr3(void)
@@ -431,9 +515,10 @@ void vcpu_exit_prepare_resume(uint64_t rip_additive)
     assert(vcpu_fault_state.valid);
 
     microkit_vcpu_x86_write_regs(0, &vcpu_fault_state.vctx);
-    microkit_vcpu_x86_write_vmcs(0, VMX_GUEST_RIP, vcpu_fault_state.rip + rip_additive);
-    microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_PRIMARY_PROCESSOR_CONTROLS, vcpu_fault_state.ppvc);
-    microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_ENTRY_INTERRUPTION_INFO, vcpu_fault_state.irq);
+    libvmm_vcpu_write(0, LIBVMM_GUEST_RIP, vcpu_fault_state.rip + rip_additive);
+    /* On SVM, PPC write only updates Microkit's SysVMEnter cache (not applied by kernel). */
+    libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, vcpu_fault_state.ppvc);
+    libvmm_vcpu_write(0, LIBVMM_CONTROL_IRQ, vcpu_fault_state.irq);
 
     vcpu_fault_state.valid = false;
 }
@@ -450,8 +535,8 @@ void vcpu_print_regs(size_t vcpu_id)
     seL4_Word interruptability = microkit_mr_get(SEL4_VMENTER_FAULT_GUEST_INT_MR);
     seL4_Word cr3 = microkit_mr_get(SEL4_VMENTER_FAULT_CR3_MR);
 
-    seL4_Word rip = microkit_vcpu_x86_read_vmcs(vcpu_id, VMX_GUEST_RIP);
-    seL4_Word rsp = microkit_vcpu_x86_read_vmcs(vcpu_id, VMX_GUEST_RSP);
+    seL4_Word rip = libvmm_vcpu_read(vcpu_id, LIBVMM_GUEST_RIP);
+    seL4_Word rsp = libvmm_vcpu_read(vcpu_id, LIBVMM_GUEST_RSP);
 
     seL4_Word eax = microkit_mr_get(SEL4_VMENTER_FAULT_EAX);
     seL4_Word ebx = microkit_mr_get(SEL4_VMENTER_FAULT_EBX);
@@ -470,7 +555,7 @@ void vcpu_print_regs(size_t vcpu_id)
     seL4_Word r14 = microkit_mr_get(SEL4_VMENTER_FAULT_R14);
     seL4_Word r15 = microkit_mr_get(SEL4_VMENTER_FAULT_R15);
 
-    seL4_Word efer = microkit_vcpu_x86_read_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_EFER);
+    seL4_Word efer = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_EFER);
 
     LOG_VMM("dumping VCPU (ID 0x%lx) registers:\n", vcpu_id);
     LOG_VMM("    vm primary processor control = 0x%lx\n", cppc);
@@ -481,9 +566,9 @@ void vcpu_print_regs(size_t vcpu_id)
     LOG_VMM("    guest physical addr = 0x%lx\n", g_p_addr);
     LOG_VMM("    rflags = 0x%lx\n", rflags);
     LOG_VMM("    interruptability = 0x%lx\n", interruptability);
-    LOG_VMM("    cr0 = 0x%lx\n", microkit_vcpu_x86_read_vmcs(vcpu_id, VMX_GUEST_CR0));
+    LOG_VMM("    cr0 = 0x%lx\n", libvmm_vcpu_read(vcpu_id, LIBVMM_GUEST_CR0));
     LOG_VMM("    cr3 = 0x%lx\n", cr3);
-    LOG_VMM("    cr4 = 0x%lx\n", microkit_vcpu_x86_read_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_CR4));
+    LOG_VMM("    cr4 = 0x%lx\n", libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR4));
     LOG_VMM("    efer = 0x%lx\n", efer);
     LOG_VMM("=========================\n");
     LOG_VMM("    rip = 0x%lx\n", rip);
@@ -509,7 +594,7 @@ void vcpu_print_regs(size_t vcpu_id)
 void vcpu_print_instruction(size_t vcpu_id)
 {
     seL4_Word ins_len = microkit_mr_get(SEL4_VMENTER_FAULT_INSTRUCTION_LEN_MR);
-    seL4_Word rip = microkit_vcpu_x86_read_vmcs(vcpu_id, VMX_GUEST_RIP);
+    seL4_Word rip = libvmm_vcpu_read(vcpu_id, LIBVMM_GUEST_RIP);
 
     LOG_VMM("faulting instruction:\n");
     for (int i = 0; i < ins_len; i++) {

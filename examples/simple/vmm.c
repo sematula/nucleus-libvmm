@@ -33,7 +33,7 @@
 #define GUEST_RAM_START_GPA 0x10000000
 #define GUEST_DTB_GPA 0x1f000000
 #define GUEST_INIT_RAM_DISK_GPA 0x1c000000
-#elif defined(BOARD_x86_64_generic_vtx)
+#elif defined(BOARD_x86_64_generic_vtx) || defined(BOARD_x86_64_generic_svm)
 #define TIMER_DRV_CH 10
 #define GUEST_RAM_START_GPA LOW_RAM_START_GPA
 #define GUEST_CMDLINE_HW "earlyprintk=serial,0x3f8,115200 debug console=ttyS0,115200 earlycon=serial,0x3f8,115200 loglevel=8"
@@ -58,7 +58,7 @@
 #define SERIAL_IRQ 58
 #elif defined(BOARD_rpi4b_1gb)
 #define SERIAL_IRQ 125
-#elif defined(BOARD_x86_64_generic_vtx)
+#elif defined(BOARD_x86_64_generic_vtx) || defined(BOARD_x86_64_generic_svm)
 #define COM1_IOAPIC_CHIP 0
 #define COM1_IOAPIC_PIN 4
 #define COM1_IO_PORT_ID 0

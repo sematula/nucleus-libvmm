@@ -17,7 +17,8 @@ REPORT_FILE := report.txt
 
 SDDF_CUSTOM_LIBC := 1
 
-SUPPORTED_BOARDS := x86_64_generic_vtx
+SUPPORTED_BOARDS := x86_64_generic_vtx \
+					x86_64_generic_svm
 
 vpath %.c $(LIBVMM) $(EXAMPLE_DIR)
 

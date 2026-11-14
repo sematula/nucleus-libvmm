@@ -118,7 +118,9 @@ You will also see that three memory regions (MRs) exist in the system.
 
 ### x86-64
 There are more components involved on x86. The following is what is in the
-QEMU example system, `examples/simple/board/x86_64_generic_vtx/simple.system`:
+QEMU example system, `examples/simple/board/x86_64_generic_vtx/simple.system`
+(Intel VT-x). The AMD SVM board packaging is the same layout under
+`examples/simple/board/x86_64_generic_svm/`:
 
 ```xml
 <memory_region name="hpet_regs" size="0x1000" phys_addr="0xfed00000" />

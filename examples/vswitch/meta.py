@@ -192,7 +192,7 @@ def generate(
         vmm_client3, copier=client3_net_copier, vswitch=True
     )
 
-    if board.name == "x86_64_generic_vtx":
+    if board.name in ("x86_64_generic_vtx", "x86_64_generic_svm"):
         x86_serial(serial_driver)
         x86_virtio_net(eth_driver)
 
@@ -263,7 +263,7 @@ if __name__ == "__main__":
     board = next(filter(lambda b: b.name == args.board, BOARDS))
 
     paddr_top = board.paddr_top
-    if board.name == "x86_64_generic_vtx":
+    if board.name in ("x86_64_generic_vtx", "x86_64_generic_svm"):
         # We don't use the value from sDDF common files so that we have
         # freedom to move memory regions around.
         paddr_top = 0x5000_0000

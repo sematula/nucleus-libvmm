@@ -19,7 +19,11 @@
 #define APIC_VIRT_LEVEL_SOFTWARE 1
 #define APIC_VIRT_LEVEL_APICV    2
 
-#ifndef APIC_VIRT_LEVEL
+#if defined(CONFIG_SVM)
+/* APICv is VT-x-only; SVM boards always use software APIC emulation. */
+#undef APIC_VIRT_LEVEL
+#define APIC_VIRT_LEVEL APIC_VIRT_LEVEL_SOFTWARE
+#elif !defined(APIC_VIRT_LEVEL)
 #define APIC_VIRT_LEVEL APIC_VIRT_LEVEL_SOFTWARE
 #endif
 

@@ -118,7 +118,8 @@ Where `<BOARD>` is one of:
 
 * `qemu_virt_aarch64`
 * `maaxboard`
-* `x86_64_generic_vtx`
+* `x86_64_generic_vtx` (Intel VT-x)
+* `x86_64_generic_svm` (AMD SVM)
 
 Other configuration options can be passed to the Makefile such as `MICROKIT_CONFIG`
 and `BUILD_DIR`, see the Makefile for details.

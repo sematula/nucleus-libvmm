@@ -9,7 +9,7 @@
 #include <libvmm/util/util.h>
 #include <libvmm/arch/x86_64/msr.h>
 #include <libvmm/arch/x86_64/vcpu.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/fault.h>
 #include <libvmm/arch/x86_64/guest_time.h>
 #include <libvmm/arch/x86_64/memory_space.h>
@@ -88,7 +88,7 @@ bool emulate_rdmsr(seL4_VCPUContext *vctx)
     } else {
         switch (vctx->ecx) {
         case MSR_EFER:
-            result = microkit_vcpu_x86_read_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_EFER);
+            result = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_EFER);
             break;
         case IA32_TIME_STAMP_COUNTER:
             result = guest_time_tsc_now();
@@ -109,7 +109,7 @@ bool emulate_rdmsr(seL4_VCPUContext *vctx)
             // in Tertiary Processor-Based VM-Execution Controls
             break;
         case IA32_PAT:
-            result = microkit_vcpu_x86_read_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_PAT);
+            result = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_PAT);
             break;
         case IA32_PLATFORM_ID:
         case IA32_TSC_ADJUST:
@@ -167,10 +167,10 @@ bool emulate_wrmsr(seL4_VCPUContext *vctx)
 
             break;
         case MSR_EFER:
-            microkit_vcpu_x86_write_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_EFER, value);
+            libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_EFER, value);
             break;
         case IA32_PAT:
-            microkit_vcpu_x86_write_vmcs(GUEST_BOOT_VCPU_ID, VMX_GUEST_PAT, value);
+            libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_PAT, value);
             break;
         case MSR_STAR:
         case MSR_LSTAR:

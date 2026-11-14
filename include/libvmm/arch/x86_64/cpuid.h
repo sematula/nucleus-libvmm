@@ -85,6 +85,7 @@
 #define CPUID_80000000H_EAX_MAX_EXT_LEAF 0x80000008
 
 #define CPUID_80000001_ECX_LM_LAHF_SAHF BIT(0) // LAHF/SAHF instructions support in 64-bit mode
+#define CPUID_80000001_ECX_SVM BIT(2)         // Secure Virtual Machine (host check / never advertise to L2)
 #define CPUID_80000001_ECX_LM_LZCNT BIT(5) // LZCNT: LZCNT instruction support
 #define CPUID_80000001_ECX_PREFETCHW BIT(8)
 

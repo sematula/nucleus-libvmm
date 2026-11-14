@@ -14,7 +14,7 @@
 #include <libvmm/arch/x86_64/fault.h>
 #include <libvmm/arch/x86_64/msr.h>
 #include <libvmm/arch/x86_64/vcpu.h>
-#include <libvmm/arch/x86_64/vmcs.h>
+#include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/linux.h>
 #include <libvmm/arch/x86_64/fault.h>
 #include <libvmm/arch/x86_64/i440fx.h>
@@ -94,12 +94,12 @@ bool guest_init(arch_guest_init_t init_args)
 
 bool guest_paging_on(void)
 {
-    return microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_CR0) & BIT(31);
+    return libvmm_vcpu_read(0, LIBVMM_GUEST_CR0) & BIT(31);
 }
 
 bool guest_in_64_bits(void)
 {
-    return guest_paging_on() && (microkit_vcpu_x86_read_vmcs(0, VMX_GUEST_EFER) & BIT(10));
+    return guest_paging_on() && (libvmm_vcpu_read(0, LIBVMM_GUEST_EFER) & BIT(10));
 }
 
 bool guest_start_long_mode(uint64_t kernel_rip, uint64_t cr3, uint64_t gdt_gpa, uint64_t gdt_limit,
@@ -117,9 +117,9 @@ bool guest_start_long_mode(uint64_t kernel_rip, uint64_t cr3, uint64_t gdt_gpa, 
     microkit_vcpu_x86_write_regs(GUEST_BOOT_VCPU_ID, initial_regs);
 
     LOG_VMM("starting guest in long mode at 0x%lx\n", kernel_rip);
-    microkit_vcpu_x86_write_vmcs(0, VMX_GUEST_RIP, kernel_rip);
-    microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_PRIMARY_PROCESSOR_CONTROLS, VMCS_PPVC_DEFAULT);
-    microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_ENTRY_INTERRUPTION_INFO, 0);
+    libvmm_vcpu_write(0, LIBVMM_GUEST_RIP, kernel_rip);
+    libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, LIBVMM_PPVC_DEFAULT);
+    libvmm_vcpu_write(0, LIBVMM_CONTROL_IRQ, 0);
     microkit_vcpu_x86_on();
     return true;
 }
@@ -132,9 +132,9 @@ bool guest_start_reset_state(void)
     }
 
     LOG_VMM("starting guest in architecturally reset state at 0x%x\n", X86_RESET_IP);
-    microkit_vcpu_x86_write_vmcs(0, VMX_GUEST_RIP, X86_RESET_IP);
-    microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_PRIMARY_PROCESSOR_CONTROLS, VMCS_PPVC_DEFAULT);
-    microkit_vcpu_x86_write_vmcs(0, VMX_CONTROL_ENTRY_INTERRUPTION_INFO, 0);
+    libvmm_vcpu_write(0, LIBVMM_GUEST_RIP, X86_RESET_IP);
+    libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, LIBVMM_PPVC_DEFAULT);
+    libvmm_vcpu_write(0, LIBVMM_CONTROL_IRQ, 0);
     microkit_vcpu_x86_on();
     return true;
 }

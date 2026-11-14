@@ -5,6 +5,13 @@
 
 # Revision history for libvmm
 
+## valence/amd-v (unreleased)
+
+Adds the `x86_64_generic_svm` board path beside `x86_64_generic_vtx` for AMD-V
+(SVM/NPT). VCPU/fault/CPUID/MSR edges mirror onto VMCB/NPF; ACPI/APIC/HPET stay
+shared. Guest time uses TSC-on-exit (no VMX preemption timer). One virt ISA per
+image — do not use the VT-x board for AMD Hyper-V nesting.
+
 ## Release 0.1.0 (26/Mar/2025)
 
 This is the first proper release of libvmm, see the README and

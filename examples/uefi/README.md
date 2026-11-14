@@ -22,7 +22,8 @@ make MICROKIT_BOARD=<BOARD> MICROKIT_SDK=/path/to/sdk
 
 Where `<MICROKIT_BOARD>` is one of:
 
-* `x86_64_generic_vtx`
+* `x86_64_generic_vtx` (Intel VT-x)
+* `x86_64_generic_svm` (AMD SVM)
 
 Other configuration options can be passed to the Makefile such as `MICROKIT_CONFIG`
 and `BUILD_DIR`, see the Makefile for details.
