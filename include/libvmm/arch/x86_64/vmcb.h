@@ -54,6 +54,8 @@
 #define VMCB_STATE_GUEST_CR4                0x548
 #define VMCB_STATE_GUEST_CR3                0x550
 #define VMCB_STATE_GUEST_CR0                0x558
+#define VMCB_STATE_GUEST_DR7                0x560
+#define VMCB_STATE_GUEST_DR6                0x568
 #define VMCB_STATE_GUEST_RFLAGS             0x570
 #define VMCB_STATE_GUEST_RIP                0x578
 #define VMCB_STATE_GUEST_RSP                0x5D8

@@ -62,6 +62,10 @@ bool initialise_guest_time(microkit_channel timer_ch)
 {
     guest_timekeeping.timer_ch = timer_ch;
     guest.tsc_hz = get_host_tsc_hz(timer_ch);
+    if (!guest.tsc_hz) {
+        LOG_VMM_ERR("host TSC frequency is 0; cannot initialise guest timekeeping\n");
+        return false;
+    }
     for (int i = 0; i < MAX_CONCURRENT_TIMEOUT; i++) {
         guest_timekeeping.timeouts[i].valid = false;
     }

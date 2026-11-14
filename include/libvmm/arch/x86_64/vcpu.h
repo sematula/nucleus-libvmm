@@ -49,10 +49,12 @@
  * Consult [1c] for more details
  */
 
-#define IA32_EFER_LME BIT(8)  /* Long mode active */
-#define IA32_EFER_LMA BIT(10) /* Enable IA-32e mode operation */
+#define IA32_EFER_LME  BIT(8)  /* Long mode enable */
+#define IA32_EFER_LMA  BIT(10) /* Long mode active */
+#define IA32_EFER_SVME BIT(12) /* Secure Virtual Machine Enable (AMD) */
 
-/* Long mode default */
+/* Long mode default (VT-x). SVM long-mode setup ORs SVME — required under
+ * nested KVM (nested_vmcb_check_save) and harmless for a non-hypervisor guest. */
 #define IA32_EFER_LM_DEFAULT (IA32_EFER_LME | IA32_EFER_LMA)
 
 /* The 32-bit EFLAGS/RFLAGS register contains a group of status flags, a control flag, and a group of system flags.

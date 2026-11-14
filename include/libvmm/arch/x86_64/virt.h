@@ -32,6 +32,7 @@
  * the kernel SVM SysVMEnter path applies RIP + EVENTINJ and ignores arg1 for now.
  * Writing LIBVMM_CONTROL_PPC therefore only updates the local Microkit cache;
  * default kernel intercepts (CPUID/HLT/IO/SHUTDOWN/VMRUN) remain in force.
+ * MSR intercept stays off until a real MSRPM exists.
  */
 #define LIBVMM_CONTROL_PPC              VMCB_CONTROL_INTERCEPT_INSTRUCTION1
 

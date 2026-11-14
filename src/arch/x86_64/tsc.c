@@ -179,18 +179,25 @@ static uint64_t measure_tsc_frequency(microkit_channel timer_ch)
 uint64_t get_host_tsc_hz(microkit_channel timer_ch)
 {
     uint64_t tsc_hz = 0;
-    if (!is_intel_cpu()) {
-        LOG_TSC("Not an Intel CPU.\n");
-        return 0;
-    } else {
+
+    /*
+     * CPUID leaf 0x15 (TSC/crystal) is an Intel enumeration. On AMD — including
+     * QEMU -cpu host,+svm — skip it and measure against the sDDF timer driver.
+     * The timer driver may itself be on the HPET fallback; that is enough for a
+     * one-shot frequency calibration. Never return 0 without measuring: guest
+     * timekeeping divides by guest.tsc_hz (LAPIC/HPET/CMOS paths).
+     */
+    if (is_intel_cpu()) {
         tsc_hz = get_tsc_frequency();
         if (!tsc_hz) {
             LOG_TSC("cannot detect TSC frequency via cpuid, manually measuring.\n");
         }
+    } else {
+        LOG_TSC("Not an Intel CPU; measuring TSC against timer driver.\n");
     }
 
     if (!tsc_hz) {
-        /* Likely running on QEMU as nested virtualisation. QEMU doesn't enumerate TSC cpuid leafs */
+        /* QEMU often omits TSC cpuid leafs under nested virt; HPET GET_TIME works. */
         tsc_hz = measure_tsc_frequency(timer_ch);
     }
 

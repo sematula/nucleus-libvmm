@@ -326,7 +326,8 @@ bool vcpu_set_up_long_mode(uint64_t cr3, uint64_t gdt_gpa, uint64_t gdt_limit)
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR0, CR0_LONG_MODE);
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR3, cr3);
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR4, CR4_DEFAULT);
-    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_EFER, IA32_EFER_LM_DEFAULT);
+    /* Nested KVM rejects VMRUN unless guest EFER.SVME is set (hardware does not). */
+    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_EFER, IA32_EFER_LM_DEFAULT | IA32_EFER_SVME);
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_RFLAGS, RFLAGS_DEFAULT);
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_PAT, PAT_RESET_VALUE);
 
