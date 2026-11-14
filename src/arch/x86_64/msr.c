@@ -97,7 +97,12 @@ bool emulate_rdmsr(seL4_VCPUContext *vctx)
         case MSR_LSTAR:
         case MSR_CSTAR:
         case MSR_SYSCALL_MASK:
+#if defined(CONFIG_VTX)
             result = microkit_vcpu_x86_read_msr(GUEST_BOOT_VCPU_ID, vctx->ecx);
+#else
+            /* SVM: no seL4 ReadMSR; empty/halt rung does not need syscall MSRs. */
+            result = 0;
+#endif
             break;
         case IA32_APIC_BASE:
             /* Figure 11-5. IA32_APIC_BASE MSR (APIC_BASE_MSR in P6 Family)
@@ -176,7 +181,12 @@ bool emulate_wrmsr(seL4_VCPUContext *vctx)
         case MSR_LSTAR:
         case MSR_CSTAR:
         case MSR_SYSCALL_MASK:
+#if defined(CONFIG_VTX)
             microkit_vcpu_x86_write_msr(GUEST_BOOT_VCPU_ID, vctx->ecx, value);
+#else
+            /* SVM: accept and discard until a guest rung needs VMCB MSR state. */
+            (void)value;
+#endif
             return true;
         case IA32_PRED_CMD:
         case IA32_SPEC_CTRL:
