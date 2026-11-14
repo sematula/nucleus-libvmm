@@ -140,7 +140,9 @@
  * MTRR
  * MCE
  */
-#define CPUID_1H_X64_EDX ( \
+/* Common EDX baseline; Self-Snoop is Intel-leaning and often absent on AMD
+ * (and under nested Hyper-V/KVM), so the SVM board omits it. */
+#define CPUID_1H_X64_EDX_COMMON ( \
     CPUID_1H_EDX_FPU | \
     CPUID_1H_EDX_VME | \
     CPUID_1H_EDX_PAT | \
@@ -160,10 +162,14 @@
     CPUID_1H_EDX_FXSR | \
     CPUID_1H_EDX_SSE1 | \
     CPUID_1H_EDX_SSE2 | \
-    CPUID_1H_EDX_SELF_SNOOP | \
     CPUID_1H_EDX_MCE | \
     CPUID_1H_EDX_MCA \
 )
+#if defined(CONFIG_SVM)
+#define CPUID_1H_X64_EDX (CPUID_1H_X64_EDX_COMMON)
+#else
+#define CPUID_1H_X64_EDX (CPUID_1H_X64_EDX_COMMON | CPUID_1H_EDX_SELF_SNOOP)
+#endif
 
 /* No:
  * TSC adjust
