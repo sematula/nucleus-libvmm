@@ -9,6 +9,8 @@
 
 #pragma once
 
+#include <microkit.h> /* CONFIG_SVM / CONFIG_VTX from board gen_config */
+
 #if defined(CONFIG_SVM)
 
 #include <libvmm/arch/x86_64/vmcb.h>
