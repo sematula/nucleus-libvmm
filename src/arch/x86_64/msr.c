@@ -37,6 +37,10 @@
 #define IA32_APIC_BASE (0x1b)
 #define IA32_FEATURE_CONTROL (0x3a)
 #define IA32_TSC_ADJUST (0x3b)
+#define IA32_SYSENTER_CS (0x174)
+#define IA32_SYSENTER_ESP (0x175)
+#define IA32_SYSENTER_EIP (0x176)
+#define IA32_DEBUGCTL (0x1d9)
 
 /* x86-64 specific MSRs */
 #define MSR_EFER            0xc0000080 /* extended feature register */
@@ -44,6 +48,15 @@
 #define MSR_LSTAR           0xc0000082 /* long mode SYSCALL target */
 #define MSR_CSTAR           0xc0000083 /* compat mode SYSCALL target */
 #define MSR_SYSCALL_MASK    0xc0000084 /* EFLAGS mask for syscall */
+#define MSR_FS_BASE         0xc0000100
+#define MSR_GS_BASE         0xc0000101
+#define MSR_KERNEL_GS_BASE  0xc0000102
+
+static uint64_t msr_star, msr_lstar, msr_cstar, msr_syscall_mask;
+static uint64_t msr_fs_base, msr_gs_base, msr_kernel_gs_base;
+static uint64_t msr_sysenter_cs, msr_sysenter_esp, msr_sysenter_eip;
+static uint64_t msr_misc_enable;
+static uint64_t msr_tsc_adjust;
 
 static bool msrs_initialised = false;
 static uint32_t apic_base_msr_mask = 0;
@@ -94,15 +107,36 @@ bool emulate_rdmsr(seL4_VCPUContext *vctx)
             result = guest_time_tsc_now();
             break;
         case MSR_STAR:
+            result = msr_star;
+            break;
         case MSR_LSTAR:
+            result = msr_lstar;
+            break;
         case MSR_CSTAR:
+            result = msr_cstar;
+            break;
         case MSR_SYSCALL_MASK:
-#if defined(CONFIG_VTX)
-            result = microkit_vcpu_x86_read_msr(GUEST_BOOT_VCPU_ID, vctx->ecx);
-#else
-            /* SVM: no seL4 ReadMSR; empty/halt rung does not need syscall MSRs. */
-            result = 0;
-#endif
+            result = msr_syscall_mask;
+            break;
+        case MSR_FS_BASE:
+            result = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, VMCB_STATE_FS + 8);
+            msr_fs_base = result;
+            break;
+        case MSR_GS_BASE:
+            result = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, VMCB_STATE_GS + 8);
+            msr_gs_base = result;
+            break;
+        case MSR_KERNEL_GS_BASE:
+            result = msr_kernel_gs_base;
+            break;
+        case IA32_SYSENTER_CS:
+            result = msr_sysenter_cs;
+            break;
+        case IA32_SYSENTER_ESP:
+            result = msr_sysenter_esp;
+            break;
+        case IA32_SYSENTER_EIP:
+            result = msr_sysenter_eip;
             break;
         case IA32_APIC_BASE:
             /* Figure 11-5. IA32_APIC_BASE MSR (APIC_BASE_MSR in P6 Family)
@@ -116,11 +150,21 @@ bool emulate_rdmsr(seL4_VCPUContext *vctx)
         case IA32_PAT:
             result = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_PAT);
             break;
+        case IA32_MISC_ENABLE:
+            result = msr_misc_enable;
+            break;
         case IA32_PLATFORM_ID:
         case IA32_TSC_ADJUST:
+            result = msr_tsc_adjust;
+            break;
+        case IA32_BIOS_SIGN_ID:
+        case IA32_FEATURE_CONTROL:
+        case IA32_DEBUGCTL:
+        case IA32_XSS:
             result = 0;
             break;
         default:
+            LOG_VMM_ERR("unhandled RDMSR 0x%lx\n", (unsigned long)vctx->ecx);
             return false;
         }
     }
@@ -178,26 +222,57 @@ bool emulate_wrmsr(seL4_VCPUContext *vctx)
             libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_PAT, value);
             break;
         case MSR_STAR:
+            msr_star = value;
+            break;
         case MSR_LSTAR:
+            msr_lstar = value;
+            break;
         case MSR_CSTAR:
+            msr_cstar = value;
+            break;
         case MSR_SYSCALL_MASK:
-#if defined(CONFIG_VTX)
-            microkit_vcpu_x86_write_msr(GUEST_BOOT_VCPU_ID, vctx->ecx, value);
-#else
-            /* SVM: accept and discard until a guest rung needs VMCB MSR state. */
-            (void)value;
-#endif
-            return true;
+            msr_syscall_mask = value;
+            break;
+        case MSR_FS_BASE:
+            msr_fs_base = value;
+            /* Keep VMCB FS.base in sync; clear CLEAN.SEG so VMRUN reloads it. */
+            libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, VMCB_STATE_FS + 8, value);
+            libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, VMCB_CONTROL_CLEAN, 0);
+            break;
+        case MSR_GS_BASE:
+            msr_gs_base = value;
+            libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, VMCB_STATE_GS + 8, value);
+            libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, VMCB_CONTROL_CLEAN, 0);
+            break;
+        case MSR_KERNEL_GS_BASE:
+            msr_kernel_gs_base = value;
+            break;
+        case IA32_SYSENTER_CS:
+            msr_sysenter_cs = value;
+            break;
+        case IA32_SYSENTER_ESP:
+            msr_sysenter_esp = value;
+            break;
+        case IA32_SYSENTER_EIP:
+            msr_sysenter_eip = value;
+            break;
+        case IA32_MISC_ENABLE:
+            msr_misc_enable = value;
+            break;
+        case IA32_TSC_ADJUST:
+            msr_tsc_adjust = value;
+            break;
         case IA32_PRED_CMD:
         case IA32_SPEC_CTRL:
             // @billn revisit, security concerns same as IA32_SPEC_CTRL, as they are used for speculative exec controls
             break;
         case IA32_XSS:
-            if (value != 0) {
-                LOG_VMM_ERR("unexpected value 0x%lx written to IA32_XSS\n", value);
-            }
+        case IA32_DEBUGCTL:
+        case IA32_BIOS_SIGN_ID:
             break;
         default:
+            LOG_VMM_ERR("unhandled WRMSR 0x%lx val=0x%lx\n", (unsigned long)vctx->ecx,
+                        (unsigned long)value);
             return false;
         }
     }

@@ -307,6 +307,10 @@ decoded_instruction_ret_t decode_instruction(size_t vcpu_id, seL4_Word rip)
     /* Copy 15 bytes of instruction from guest RAM, the actual number of bytes parsed will be less.
      * We have to derive the instruction length ourselves, as the silicon won't tell us... */
     void *instruction_vaddr = gpa_to_hva(rip_gpa, X86_MAX_INSTRUCTION_LENGTH);
+    if (!instruction_vaddr) {
+        LOG_VMM_ERR("instruction GPA 0x%lx not in guest RAM\n", (unsigned long)rip_gpa);
+        return (decoded_instruction_ret_t) { .type = INSTRUCTION_DECODE_FAIL, .decoded = {} };
+    }
     memcpy(instruction_buf, instruction_vaddr, X86_MAX_INSTRUCTION_LENGTH);
 
     decoded_instruction_ret_t ret = { .type = INSTRUCTION_DECODE_FAIL, .decoded = {} };

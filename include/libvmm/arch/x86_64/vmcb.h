@@ -32,6 +32,9 @@
 #define VMCB_CONTROL_EXITINTINFO            0x088
 #define VMCB_CONTROL_NP_ENABLE              0x090
 #define VMCB_CONTROL_EVENTINJ               0x0A8
+#define VMCB_CONTROL_CLEAN                  0x0C0
+/* Clean bit 2 = SEG (DS/ES/FS/GS); clear so VMRUN reloads bases after WRMSR. */
+#define VMCB_CLEAN_SEG                      BIT(2)
 #define VMCB_CONTROL_NCR3                   0x0B0
 #define VMCB_CONTROL_NRIP                   0x0C8
 
@@ -60,6 +63,7 @@
 #define VMCB_STATE_GUEST_RIP                0x578
 #define VMCB_STATE_GUEST_RSP                0x5D8
 #define VMCB_STATE_GUEST_RAX                0x5F8
+#define VMCB_STATE_GUEST_CR2                0x640
 #define VMCB_STATE_GUEST_PAT                0x668
 
 #ifndef PAT_RESET_VALUE
@@ -67,6 +71,7 @@
 #endif
 
 /* intercept[INSTRUCTION1] bits (FreeBSD VMCB_INTCPT_*). */
+#define VMCB_INTERCEPT_RDTSC                BIT(14)
 #define VMCB_INTERCEPT_CPUID                BIT(18)
 #define VMCB_INTERCEPT_HLT                  BIT(24)
 #define VMCB_INTERCEPT_IO                   BIT(27)
@@ -93,6 +98,7 @@
 #define VMCB_NPF_INFO1_ID                   BIT(4)
 
 /* Exit codes (AMD APM Vol 2 Appendix C / FreeBSD VMCB_EXIT_*). */
+#define VMCB_EXIT_RDTSC                     0x06EULL
 #define VMCB_EXIT_CPUID                     0x072ULL
 #define VMCB_EXIT_HLT                       0x078ULL
 #define VMCB_EXIT_IO                        0x07BULL
@@ -100,6 +106,7 @@
 #define VMCB_EXIT_SHUTDOWN                  0x07FULL
 #define VMCB_EXIT_VMRUN                     0x080ULL
 #define VMCB_EXIT_XSETBV                    0x08DULL
+#define VMCB_EXIT_EXCP_BASE                 0x040ULL
 #define VMCB_EXIT_NPF                       0x400ULL
 
 /* Aliases matching seL4 svm_vmcb.h naming. */

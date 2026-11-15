@@ -373,8 +373,12 @@ static void lapic_write_eoi(void)
 bool lapic_fault_handle(seL4_VCPUContext *vctx, uint64_t offset, seL4_Word qualification,
                         decoded_instruction_ret_t decoded_ins)
 {
-    assert(mem_access_width_to_bytes(decoded_ins) == 4);
-    assert(offset % 4 == 0);
+    int width = mem_access_width_to_bytes(decoded_ins);
+    if (width != 4 || (offset % 4) != 0) {
+        LOG_VMM_ERR("LAPIC access width=%d offset=0x%lx (need 4-byte aligned)\n", width,
+                    (unsigned long)offset);
+        return false;
+    }
 
     bool success;
 
@@ -382,11 +386,17 @@ bool lapic_fault_handle(seL4_VCPUContext *vctx, uint64_t offset, seL4_Word quali
         uint32_t data;
         success = lapic_read_fault_handle(offset, &data);
         if (success) {
-            assert(mem_read_set_data(decoded_ins, qualification, vctx, offset, data));
+            if (!mem_read_set_data(decoded_ins, qualification, vctx, offset, data)) {
+                LOG_VMM_ERR("LAPIC read set_data failed offset=0x%lx\n", (unsigned long)offset);
+                return false;
+            }
         }
     } else {
         uint64_t data;
-        assert(mem_write_get_data(decoded_ins, qualification, vctx, &data));
+        if (!mem_write_get_data(decoded_ins, qualification, vctx, &data)) {
+            LOG_VMM_ERR("LAPIC write get_data failed offset=0x%lx\n", (unsigned long)offset);
+            return false;
+        }
         success = lapic_write_fault_handle(offset, data);
     }
 

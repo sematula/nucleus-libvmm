@@ -36,3 +36,12 @@ void guest_time_handle_timer_ntfn(void);
 
 /* Recompute the next time out based on the current wall clock time. */
 void guest_time_maintenance(void);
+
+#if defined(CONFIG_SVM)
+/*
+ * SVM has no VMX-preemption timer. When a timeout is armed we intercept RDTSC
+ * so TSC busy-waits (Linux mdelay) still exit and guest_time_maintenance can
+ * fire device IRQs. prepare_resume must OR this into INTERCEPT1.
+ */
+bool guest_time_rdtsc_intercept_needed(void);
+#endif

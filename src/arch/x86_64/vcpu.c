@@ -16,6 +16,7 @@
 #include <libvmm/arch/x86_64/vcpu.h>
 #include <libvmm/arch/x86_64/virt.h>
 #include <libvmm/arch/x86_64/fault.h>
+#include <libvmm/arch/x86_64/guest_time.h>
 #include <sel4/arch/vmenter.h>
 
 struct vcpu_fault_state {
@@ -312,16 +313,22 @@ bool vcpu_set_up_reset_state(void)
  * Also enable XSETBV intercept via WriteVMCB (not in the Microkit SysVMEnter cache).
  */
 
-static void vcpu_svm_enable_xsetbv_intercept(void)
+static void vcpu_svm_set_default_intercepts(void)
 {
-    uint64_t i2 = libvmm_vcpu_read(GUEST_BOOT_VCPU_ID, VMCB_CONTROL_INTERCEPT_INSTRUCTION2);
-    i2 |= VMCB_INTERCEPT_XSETBV;
-    libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, VMCB_CONTROL_INTERCEPT_INSTRUCTION2, i2);
+    svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION1, LIBVMM_SVM_INTERCEPT1_DEFAULT);
+    svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION2, LIBVMM_SVM_INTERCEPT2_DEFAULT);
+}
+
+/* TEMP(#33): surface #DF/#GP/#UD instead of silent nested reset. */
+static void vcpu_svm_enable_debug_exception_intercepts(void)
+{
+    svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_EXC, BIT(6) | BIT(8) | BIT(13));
 }
 
 bool vcpu_set_up_long_mode(uint64_t cr3, uint64_t gdt_gpa, uint64_t gdt_limit)
 {
-    vcpu_svm_enable_xsetbv_intercept();
+    vcpu_svm_set_default_intercepts();
+    (void)vcpu_svm_enable_debug_exception_intercepts;
 
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR0, CR0_LONG_MODE);
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR3, cr3);
@@ -350,7 +357,7 @@ bool vcpu_set_up_long_mode(uint64_t cr3, uint64_t gdt_gpa, uint64_t gdt_limit)
 bool vcpu_set_up_reset_state(void)
 {
     /* Mirror VT-x real-mode-like reset using VMCB segment format ([2]). */
-    vcpu_svm_enable_xsetbv_intercept();
+    vcpu_svm_set_default_intercepts();
 
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR0, CR0_RESET);
     libvmm_vcpu_write(GUEST_BOOT_VCPU_ID, LIBVMM_GUEST_CR3, 0);
@@ -431,7 +438,11 @@ void vcpu_exit_update_ppvc(uint64_t ppvc)
     if (vcpu_fault_state.valid) {
         vcpu_fault_state.ppvc = ppvc;
     } else {
+#if defined(CONFIG_SVM)
+        svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION1, (uint32_t)ppvc);
+#else
         libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, ppvc);
+#endif
     }
 }
 
@@ -517,8 +528,21 @@ void vcpu_exit_prepare_resume(uint64_t rip_additive)
 
     microkit_vcpu_x86_write_regs(0, &vcpu_fault_state.vctx);
     libvmm_vcpu_write(0, LIBVMM_GUEST_RIP, vcpu_fault_state.rip + rip_additive);
-    /* On SVM, PPC write only updates Microkit's SysVMEnter cache (not applied by kernel). */
+#if defined(CONFIG_SVM)
+    /* Never write a raw 0/PPVC into INTERCEPT1 — preserves INTERCEPT2 (VMRUN). */
+    {
+        uint32_t i1 = LIBVMM_SVM_INTERCEPT1_DEFAULT;
+        if (guest_time_rdtsc_intercept_needed()) {
+            /* Force exits during TSC busy-waits so soft timers can fire. */
+            i1 |= VMCB_INTERCEPT_RDTSC;
+        }
+        svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION1, i1);
+    }
+    /* Force VMRUN to reload guest state we may have patched (FS/GS bases…). */
+    libvmm_vcpu_write(0, VMCB_CONTROL_CLEAN, 0);
+#else
     libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, vcpu_fault_state.ppvc);
+#endif
     libvmm_vcpu_write(0, LIBVMM_CONTROL_IRQ, vcpu_fault_state.irq);
 
     vcpu_fault_state.valid = false;

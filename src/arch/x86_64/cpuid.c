@@ -119,7 +119,9 @@ bool emulate_cpuid(seL4_VCPUContext *vctx)
 
         vctx->eax = CPUID_1H_EAX;
         vctx->ebx = clflush_line_size_mask;
-        vctx->ecx = CPUID_1H_X64_ECX;
+        /* Never set hypervisor bit (ECX.31): nested L0 KVM must not be visible
+         * to the guest or it enables kvmclock against missing PV MSRs. */
+        vctx->ecx = CPUID_1H_X64_ECX & ~BIT(31);
         vctx->edx = CPUID_1H_X64_EDX;
 
         /* "A value of 1 indicates that the OS has set CR4.OSXSAVE[bit 18]

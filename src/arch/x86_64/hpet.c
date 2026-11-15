@@ -338,13 +338,11 @@ static bool hpet_fault_handle_config_write(uint8_t comparator, uint64_t data, de
     }
 
     if (!irq_en_old && irq_en_new) {
-        if (regs->irq_registered) {
-            virq_deregister(X86_IOAPIC_IRQ_ROUTE(0, get_timer_n_ioapic_pin(comparator)));
-        }
+        /* Do not deregister first: pin 2 may already be owned by the PIT. */
         virq_register(X86_IOAPIC_IRQ_ROUTE(0, get_timer_n_ioapic_pin(comparator)), NULL, NULL);
         regs->irq_registered = true;
     } else if (irq_en_old && !irq_en_new && regs->irq_registered) {
-        virq_deregister(X86_IOAPIC_IRQ_ROUTE(0, get_timer_n_ioapic_pin(comparator)));
+        /* Leave pin registered — PIT may still need it. */
         regs->irq_registered = false;
     }
 

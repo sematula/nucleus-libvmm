@@ -27,8 +27,8 @@
 #define IA32_VMX_MISC 0x485
 #endif
 
-/* Enough for local APIC timer + 3 HPET comparators, increase this if you add more timer devices. */
-#define MAX_CONCURRENT_TIMEOUT 4
+/* LAPIC timer + 3 HPET comparators + PIT (+ spare). */
+#define MAX_CONCURRENT_TIMEOUT 8
 
 typedef struct virtual_timer_time_out {
     bool valid;
@@ -203,9 +203,9 @@ void guest_time_maintenance(void)
 
 #if defined(CONFIG_SVM)
     /*
-     * SVM deviation: without a preemption timer, service due timeouts on each
-     * exit and keep bookkeeping for future exits. Timeouts only fire when the
-     * guest already exits (HLT/IO/NPF/…).
+     * SVM deviation: no preemption timer. Service due timeouts on each exit.
+     * RDTSC intercept (see guest_time_rdtsc_intercept_needed) forces exits
+     * during TSC busy-waits so IRQs can still be delivered.
      */
     if (tsc_now >= soonest_absolute_expiry_tsc) {
         guest_time_service_timeouts();
@@ -289,3 +289,13 @@ void guest_time_handle_timer_ntfn(void)
     guest_time_service_timeouts();
     guest_time_maintenance();
 }
+
+#if defined(CONFIG_SVM)
+bool guest_time_rdtsc_intercept_needed(void)
+{
+    if (!guest_timekeeping.valid) {
+        return false;
+    }
+    return guest_time_get_soonest_absolute_expiry_tsc() != -1;
+}
+#endif

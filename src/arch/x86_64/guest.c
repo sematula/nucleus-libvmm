@@ -19,6 +19,7 @@
 #include <libvmm/arch/x86_64/fault.h>
 #include <libvmm/arch/x86_64/i440fx.h>
 #include <libvmm/arch/x86_64/cmos.h>
+#include <libvmm/arch/x86_64/pit.h>
 #include <sel4/arch/vmenter.h>
 #endif
 
@@ -75,6 +76,12 @@ bool guest_init(arch_guest_init_t init_args)
         return false;
     }
 
+    /* i8254 PIT (emulated; needed for Linux early KASLR entropy) */
+    if (!initialise_pit()) {
+        LOG_VMM_ERR("Failed to register PIO handler for PIT\n");
+        return false;
+    }
+
     /* Initialise PCI bus, x86 does not need ECAM for PCI. */
     if (init_args.pci_init.mmio_aperature_size) {
         if (!pci_bus_init(init_args.pci_init.ecam_gpa, init_args.pci_init.ecam_size,
@@ -118,7 +125,12 @@ bool guest_start_long_mode(uint64_t kernel_rip, uint64_t cr3, uint64_t gdt_gpa, 
 
     LOG_VMM("starting guest in long mode at 0x%lx\n", kernel_rip);
     libvmm_vcpu_write(0, LIBVMM_GUEST_RIP, kernel_rip);
+#if defined(CONFIG_SVM)
+    svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION1, LIBVMM_SVM_INTERCEPT1_DEFAULT);
+    svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION2, LIBVMM_SVM_INTERCEPT2_DEFAULT);
+#else
     libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, LIBVMM_PPVC_DEFAULT);
+#endif
     libvmm_vcpu_write(0, LIBVMM_CONTROL_IRQ, 0);
     microkit_vcpu_x86_on();
     return true;
@@ -133,7 +145,12 @@ bool guest_start_reset_state(void)
 
     LOG_VMM("starting guest in architecturally reset state at 0x%x\n", X86_RESET_IP);
     libvmm_vcpu_write(0, LIBVMM_GUEST_RIP, X86_RESET_IP);
+#if defined(CONFIG_SVM)
+    svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION1, LIBVMM_SVM_INTERCEPT1_DEFAULT);
+    svm_vmcb_write_u32(VMCB_CONTROL_INTERCEPT_INSTRUCTION2, LIBVMM_SVM_INTERCEPT2_DEFAULT);
+#else
     libvmm_vcpu_write(0, LIBVMM_CONTROL_PPC, LIBVMM_PPVC_DEFAULT);
+#endif
     libvmm_vcpu_write(0, LIBVMM_CONTROL_IRQ, 0);
     microkit_vcpu_x86_on();
     return true;

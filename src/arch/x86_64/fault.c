@@ -209,11 +209,14 @@ bool ept_fault_is_write(seL4_Word qualification)
 #define SVM_INSN_LEN_CPUID 2
 #define SVM_INSN_LEN_HLT   1
 #define SVM_INSN_LEN_MSR   2
+#define SVM_INSN_LEN_RDTSC 2
 #define SVM_INSN_LEN_XSETBV 3
 
 char *fault_to_string(int exit_reason)
 {
     switch ((uint64_t)exit_reason) {
+    case VMCB_EXIT_RDTSC:
+        return "RDTSC";
     case VMCB_EXIT_CPUID:
         return "CPUID";
     case VMCB_EXIT_HLT:
@@ -463,13 +466,26 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
     decoded_instruction_ret_t decoded_ins = { 0 };
     unsigned rip_additive = 0;
     bool msr_or_xsetbv_fail = false;
-
     vcpu_cache_exit_state(msginfo);
 
     seL4_Word f_reason = vcpu_exit_get_reason();
     seL4_Word qualification = vcpu_exit_get_qualification();
     seL4_Word rip = vcpu_exit_get_rip();
     seL4_VCPUContext *vctx = vcpu_exit_get_context();
+
+    /* TEMP(#33): breadcrumb rare exits only (MSR spam is noisy). */
+    {
+        static uint64_t exit_n;
+        exit_n++;
+        if (f_reason == VMCB_EXIT_NPF || f_reason == VMCB_EXIT_SHUTDOWN
+            || f_reason == VMCB_EXIT_HLT || f_reason >= VMCB_EXIT_EXCP_BASE
+            || (f_reason == VMCB_EXIT_MSR && (vctx->ecx == 0x1b || vctx->ecx < 0x100))) {
+            LOG_VMM("exit#%lu reason=0x%lx rip=0x%lx qual=0x%lx gpa=0x%lx ecx=0x%lx\n",
+                    (unsigned long)exit_n, (unsigned long)f_reason, (unsigned long)rip,
+                    (unsigned long)qualification, (unsigned long)vcpu_exit_get_gpa(),
+                    (unsigned long)vctx->ecx);
+        }
+    }
 
     switch (f_reason) {
     case VMCB_EXIT_CPUID:
@@ -511,6 +527,15 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
         rip_additive = SVM_INSN_LEN_XSETBV;
         msr_or_xsetbv_fail = !success;
         break;
+    case VMCB_EXIT_RDTSC: {
+        /* Pass through host TSC (guest wall-clock == host TSC for bring-up). */
+        uint64_t tsc = guest_time_tsc_now();
+        vctx->eax = (uint32_t)tsc;
+        vctx->edx = (uint32_t)(tsc >> 32);
+        success = true;
+        rip_additive = SVM_INSN_LEN_RDTSC;
+        break;
+    }
     case VMCB_EXIT_HLT:
         /* Trap-like: leave RIP on HLT so empty/halt can observe halt. */
         success = true;
@@ -525,7 +550,31 @@ bool fault_handle(size_t vcpu_id, microkit_msginfo msginfo)
         success = false;
         break;
     default:
-        LOG_VMM_ERR("unhandled SVM fault: 0x%lx\n", f_reason);
+        if (f_reason >= VMCB_EXIT_EXCP_BASE && f_reason < VMCB_EXIT_EXCP_BASE + 32) {
+            uint64_t vec = f_reason - VMCB_EXIT_EXCP_BASE;
+            static uint64_t excp_logs;
+            if (excp_logs < 32) {
+                excp_logs++;
+                LOG_VMM_ERR("guest exception vector=%lu rip=0x%lx info1=0x%lx cr2=0x%lx\n",
+                            (unsigned long)vec, (unsigned long)rip,
+                            (unsigned long)qualification,
+                            (unsigned long)libvmm_vcpu_read(0, VMCB_STATE_GUEST_CR2));
+            }
+            /* Reinject so we can observe cascades instead of freezing the VCPU. */
+            uint64_t eventinj = vec;
+            eventinj |= ((uint64_t)VMCB_EVENTINJ_TYPE_EXCEPTION) << 8;
+            eventinj |= VMCB_EVENTINJ_VALID;
+            /* #DF/#TS/#NP/#SS/#GP/#PF/#AC have error codes. */
+            if (vec == 8 || vec == 10 || vec == 11 || vec == 12 || vec == 13 || vec == 14 || vec == 17) {
+                eventinj |= VMCB_EVENTINJ_EC_VALID;
+                eventinj |= (qualification & 0xffffffffull) << 32;
+            }
+            vcpu_exit_inject_irq(eventinj);
+            success = true;
+            rip_additive = 0;
+        } else {
+            LOG_VMM_ERR("unhandled SVM fault: 0x%lx rip=0x%lx\n", f_reason, (unsigned long)rip);
+        }
     };
 
     /*

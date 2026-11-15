@@ -132,11 +132,14 @@ bool virq_register(irq_routing_info_t irq_routing_info, virq_ack_fn_t ack_fn, vo
         return false;
     }
 
-    uint8_t chip = IRQ_ROUTE_TO_X86_IOAPIC_CHIP(irq_routing_info);
     uint8_t pin = IRQ_ROUTE_TO_X86_IOAPIC_PIN(irq_routing_info);
+    /* Idempotent: PIT and HPET legacy mode both use pin 2. */
     if (ioapic_regs.virq_handle_map[pin].valid) {
-        LOG_VMM_ERR("Pin %d is already registered on virtual I/O APIC %d\n", pin, chip);
-        return false;
+        if (ack_fn) {
+            ioapic_regs.virq_handle_map[pin].ack_fn = ack_fn;
+            ioapic_regs.virq_handle_map[pin].ack_data = ack_data;
+        }
+        return true;
     }
 
     ioapic_regs.virq_handle_map[pin].valid = true;
