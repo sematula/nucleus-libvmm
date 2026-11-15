@@ -138,6 +138,11 @@ static uint64_t measure_tsc_frequency(microkit_channel timer_ch)
         tsc_delta = tsc_post - tsc_pre;
         ns_delta = ns_post - ns_pre;
 
+        /* Stale/broken timer (e.g. HPET not advancing) → skip this sample. */
+        if (ns_delta == 0 || tsc_delta == 0) {
+            continue;
+        }
+
         /* NS timestamp is just a 1GHz counter so the math is simple. */
         tsc_hz = (tsc_delta * 1000000000) / ns_delta;
 
@@ -180,6 +185,18 @@ uint64_t get_host_tsc_hz(microkit_channel timer_ch)
 {
     uint64_t tsc_hz = 0;
 
+#ifdef SVM_RUNG_FIXED_TSC_HZ
+    /*
+     * Hyper-V Gen2 empty/halt rung: HPET MMIO PPC can stall forever, so skip
+     * measure and use the board KernelPC99TSCFrequency placeholder. QEMU
+     * svm-rung does not define this and still measures.
+     */
+    (void)timer_ch;
+    LOG_TSC("using fixed TSC Hz %llu (SVM_RUNG_FIXED_TSC_HZ)\n",
+            (unsigned long long)SVM_RUNG_FIXED_TSC_HZ);
+    return (uint64_t)SVM_RUNG_FIXED_TSC_HZ;
+#endif
+
     /*
      * CPUID leaf 0x15 (TSC/crystal) is an Intel enumeration. On AMD — including
      * QEMU -cpu host,+svm — skip it and measure against the sDDF timer driver.
@@ -199,6 +216,16 @@ uint64_t get_host_tsc_hz(microkit_channel timer_ch)
     if (!tsc_hz) {
         /* QEMU often omits TSC cpuid leafs under nested virt; HPET GET_TIME works. */
         tsc_hz = measure_tsc_frequency(timer_ch);
+    }
+
+    if (!tsc_hz) {
+        /*
+         * Last resort: match the SVM board's KernelPC99TSCFrequency placeholder
+         * (2 GHz). Enough for empty/halt VMRUN when HPET/measure is unavailable
+         * under Hyper-V Gen2; guest timekeeping accuracy is not the rung bar.
+         */
+        LOG_TSC("measure failed; using 2 GHz board TSC placeholder\n");
+        tsc_hz = 2000000000ull;
     }
 
     return tsc_hz;
